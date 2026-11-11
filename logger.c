@@ -12,8 +12,9 @@
 // Log config
 #define LOG_MESSAGE_SIZE 128
 #define LOG_QUEUE_SIZE 10
-#define LOG_STACK_SIZE 128
+#define LOG_STACK_SIZE 256
 #define LOG_TIMEOUT_MS 100
+#define LOG_FORMAT_SIZE 28 // Color(7) + Timestamp(15) + ColorReset(4) + NewLine(1) + Zero(1) = 28 bytes
 #define LOG_ENABLE_TIMESTAMP 1
 
 // Message struct
@@ -26,6 +27,7 @@ struct message_t {
 // Private variables
 static QueueHandle_t log_queue = NULL;
 static UART_HandleTypeDef *log_huart = NULL;
+static char log_out_buf[LOG_MESSAGE_SIZE + LOG_FORMAT_SIZE]; // Message + Format
 
 static const char *level_colors[] = {
 	"\x1b[1;31m", // Red     - ERROR
@@ -125,18 +127,19 @@ void log_task(void *argument)
 	(void) argument;
 
 	struct message_t message;
-	char output[LOG_MESSAGE_SIZE + 80]; // Message + Timestamps + Colors
 
 	while (true) {
 		if (xQueueReceive(log_queue, &message, portMAX_DELAY) == pdPASS) {
-			// Create output buffer
-			int length = -1;
+			// Validate level value
+			if (message.level < 0 || message.level > LOG_DBG) {
+				continue;
+			}
 
 #if LOG_ENABLE_TIMESTAMP == 1
-			length = snprintf(output, sizeof(output), "%s[%lu ms]%s%s\n", level_colors[message.level],
+			int length = snprintf(log_out_buf, sizeof(log_out_buf), "%s[%lu ms]%s%s\n", level_colors[message.level],
 			                  message.timestamp, message.text, reset_color);
 #else
-			length = snprintf(output, sizeof(output), "%s%s%s\n", level_colors[message.level], message.text,
+			int length = snprintf(log_out_buf, sizeof(log_out_buf), "%s%s%s\n", level_colors[message.level], message.text,
 			                  reset_color);
 #endif
 
@@ -146,10 +149,10 @@ void log_task(void *argument)
 			}
 
 			// Truncate message
-			const int size = length < sizeof(output) ? length : sizeof(output) - 1;
+			const int size = length < sizeof(log_out_buf) ? length : sizeof(log_out_buf) - 1;
 
 			// Send message via UART
-			HAL_UART_Transmit(log_huart, (uint8_t *) (output), size, LOG_TIMEOUT_MS);
+			HAL_UART_Transmit(log_huart, (uint8_t *) (log_out_buf), size, LOG_TIMEOUT_MS);
 		}
 	}
 }
